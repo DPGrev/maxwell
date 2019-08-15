@@ -50,7 +50,7 @@ public class InflightMessageList {
 	}
 
 	// number of total messages we allow to be outstanding at once
-	private static final int DEFAULT_CAPACITY = 10000;
+	private static final int DEFAULT_CAPACITY = 3800;
 
 	// how long before we consider the head of the queue stuck
 	private final long producerAckTimeoutMS;

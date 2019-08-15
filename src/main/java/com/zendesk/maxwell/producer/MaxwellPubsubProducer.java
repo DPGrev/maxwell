@@ -5,6 +5,8 @@ import com.codahale.metrics.Meter;
 import com.google.api.core.ApiFuture;
 import com.google.api.core.ApiFutureCallback;
 import com.google.api.core.ApiFutures;
+import com.google.api.gax.batching.BatchingSettings;
+import com.google.api.gax.retrying.RetrySettings;
 import com.google.cloud.pubsub.v1.Publisher;
 import com.google.common.util.concurrent.MoreExecutors;
 import com.google.protobuf.ByteString;
@@ -19,6 +21,7 @@ import com.zendesk.maxwell.util.StoppableTask;
 import com.zendesk.maxwell.util.StoppableTaskState;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.threeten.bp.Duration;
 
 import java.io.IOException;
 import java.util.concurrent.ArrayBlockingQueue;
@@ -133,14 +136,45 @@ class MaxwellPubsubProducerWorker
                                      throws IOException {
     super(context);
 
+    // Batch settings control how the publisher batches messages
+    long requestBytesThreshold = 9500000L; // default : 1 byte
+    long messageCountBatchSize = 950L; // default : 1 message
+    Duration publishDelayThreshold = Duration.ofMillis(50); // default : 1 ms
+
+    // Publish request get triggered based on request size, messages count & time since last publish
+    BatchingSettings batchingSettings =
+        BatchingSettings.newBuilder()
+            .setElementCountThreshold(messageCountBatchSize)
+            .setRequestByteThreshold(requestBytesThreshold)
+            .setDelayThreshold(publishDelayThreshold)
+            .build();
+    
+    // Retry settings control how the publisher handles retryable failures
+    Duration retryDelay = Duration.ofMillis(5); // default: 5 ms
+    double retryDelayMultiplier = 2.0; // back off for repeated failures, default: 2.0
+    Duration maxRetryDelay = Duration.ofSeconds(600); // default : Long.MAX_VALUE
+    Duration totalTimeout = Duration.ofSeconds(50); // default: 10 seconds
+    Duration initialRpcTimeout = Duration.ofSeconds(10); // default: 10 seconds
+    Duration maxRpcTimeout = Duration.ofSeconds(10); // default: 10 seconds
+
+    RetrySettings retrySettings =
+        RetrySettings.newBuilder()
+            .setInitialRetryDelay(retryDelay)
+            .setRetryDelayMultiplier(retryDelayMultiplier)
+            .setMaxRetryDelay(maxRetryDelay)
+            .setTotalTimeout(totalTimeout)
+            .setInitialRpcTimeout(initialRpcTimeout)
+            .setMaxRpcTimeout(maxRpcTimeout)
+            .build();
+
     this.projectId = pubsubProjectId;
     this.topic = ProjectTopicName.of(pubsubProjectId, pubsubTopic);
-    this.pubsub = Publisher.newBuilder(this.topic).build();
+    this.pubsub = Publisher.newBuilder(this.topic).setBatchingSettings(batchingSettings).setRetrySettings(retrySettings).build();
 
     if ( context.getConfig().outputConfig.outputDDL == true &&
          ddlPubsubTopic != pubsubTopic ) {
       this.ddlTopic = ProjectTopicName.of(pubsubProjectId, ddlPubsubTopic);
-      this.ddlPubsub = Publisher.newBuilder(this.ddlTopic).build();
+      this.ddlPubsub = Publisher.newBuilder(this.ddlTopic).setBatchingSettings(batchingSettings).setRetrySettings(retrySettings).build();
     } else {
       this.ddlTopic = this.topic;
       this.ddlPubsub = this.pubsub;
